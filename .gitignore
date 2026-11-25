@@ -1,0 +1,54 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Databases and runtime data (may contain synthetic PHI-like data)
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+data/emails/
+data/tts_usage.json
+data/tts_usage.tmp
+data/tts_health.json
+data/tts_health.tmp
+
+# Downloaded local voice models (large, re-downloadable; see README, Local TTS)
+models/
+tts_samples/
+
+# Logs, transcripts, recordings
+*.log
+logs/
+transcripts/
+recordings/
+*.wav
+*.mp3
+
+# LiveKit / model caches
+.livekit/
+.cache/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local Word lock files
+~$*
+
+# Local assistant instructions (kept out of the repository)
+CLAUDE.md
