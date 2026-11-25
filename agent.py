@@ -1,7 +1,7 @@
 """Sunrise Family Clinic voice receptionist.
 
-Pipeline: browser mic -> LiveKit Cloud -> Groq Whisper STT -> [SSN/emergency gate in code]
-          -> Groq LLM + backend tools -> Groq Orpheus TTS.
+Pipeline: browser mic -> LiveKit Cloud -> Silero VAD + Groq Whisper STT -> [SSN / emergency gate and scripted flows in code]
+          -> Groq LLM (router) + backend tools -> TTS chain (Deepgram -> Cloudflare -> local Piper).
 
 Run:  lk agent dev agent.py --log-level INFO   (connect from the LiveKit Cloud Agent Console)
 """

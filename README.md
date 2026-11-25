@@ -180,15 +180,20 @@ integration; tamper-evident central audit logs; a consent flow for recording; re
 | 6 | Emergency | "I'm having chest pain" -> 911 / nearest ER, nothing else continues |
 | 7 | Third party | "What does my husband owe?" -> declined |
 
-## Known limitations
+## Known limitations (free API tiers)
 
-* Live-tested by the developer only for the flows above; the latest fixes were covered by offline tests and not re-confirmed by voice.
-* The agent cannot hang up, and "transfer to staff" is simulated. Twilio / phone integration is not implemented.
-* Whisper can mishear digits and names; a misheard detail counts as a failed attempt. Typed chat is disabled (it would bypass the speech gate).
-* **The voice depends on the network.** From the developer's PC the Deepgram path was unreliable and Cloudflare's free allowance is small,
-  so each clip is held until complete and the chain falls back to the local voice (see the technical notes). For a stall-free demo use
-  `TTS_PROVIDER_ORDER=local`.
-* Free tiers (Groq, Deepgram, Cloudflare) are demo-only; their limits can end a long conversation.
+Every external service here runs on a free tier, and the limits caused real problems during development:
+
+* **Groq text-to-speech (Orpheus):** about 3,600 characters a day (and 10 requests a minute), with its terms to be accepted per account.
+  Calls went silent mid-sentence once it ran out, so it was replaced as the main voice.
+* **Groq LLM:** a cap of about 8,000 tokens a minute per model. Prompts, tools and history are kept small and the LLM is skipped for the
+  scripted flows; a router falls back to other models when one is limited.
+* **Deepgram:** a one-time credit, and from the developer's PC its network path timed out or stalled for many seconds on some requests.
+* **Cloudflare Workers AI:** a small free daily allowance (about 3,600 characters if the free 10,000 Neurons a day holds; unconfirmed),
+  after which it answers HTTP 429.
+* **What the agent does about it:** each voice clip is held until complete, a clip that misses its deadline goes to the next voice, a
+  failed voice is skipped by later calls for a few minutes, and the local voice (no network, no quota) always finishes the call. The voice
+  can therefore change mid-call. For a stall-free demo use `TTS_PROVIDER_ORDER=local`. Free tiers are for demos with synthetic data only.
 
 ## Layout
 
@@ -201,5 +206,4 @@ data/seed.json          synthetic patients, medications and slots
 scripts/                TTS measurement tools (tts_samples, tts_probe, tts_chain_check)
 tests/                  offline tests (+ live-LLM tests, deselected with -k "not live")
 docs/                   TECHNICAL_NOTES.md, PROGRESS.md, VOICE_TEST_CHECKLIST.md
-Task_requirements.docx  the original assignment
 ```

@@ -140,7 +140,7 @@ mic -> LiveKit -> Groq Whisper STT -> [stt_node gate: scrub SSN digits]        (
   verification failures).
 * `clinic/services.py` - **every rule is enforced here**: verification state, after-hours lockout,
   emergency lockout, explicit confirmation, slot integrity, validation.
-* `clinic/tools.py` + `agent.py` - 16 thin LLM tools. None accepts a patient id, a verified flag or SSN digits.
+* `clinic/tools.py` + `agent.py` - 12 thin LLM tools. None accepts a patient id, a verified flag or SSN digits.
 * `clinic/db.py` - schema, seed, atomic transactions. `clinic/security.py` - masking, hashing, audit.
 * `clinic/clock.py` - Eastern Time (DST-aware) and the test clock.
 
@@ -668,7 +668,7 @@ transfer; retention policies; security review and penetration testing.
   free-tier limit) now gets a short spoken apology instead of silence. Each LLM request costs about 1,400 tokens
   (prompt + 13 tools) with the history capped at 14 items.
 - **Groq free-tier limits** can still make a long conversation unreliable: TTS 10 requests/min and 100/day; the LLM 8,000
-  tokens/min while each LLM request costs ~1,600-2,200 tokens (prompt + 16 tools + history); a refill exchange takes about five
+  tokens/min while each LLM request costs ~1,600-2,200 tokens (prompt + 12 tools + history); a refill exchange takes about five
   requests, so roughly one such exchange per minute. Groq's
   upgrade (Dev Tier) is a billing change that has not been made or tested. See PROGRESS.md.
 - Whisper can mishear digits and names; a misheard detail counts as a failed attempt.
@@ -692,7 +692,7 @@ transfer; retention policies; security review and penetration testing.
 ## Layout
 
 ```
-agent.py                    entrypoint, STT/turn hooks, 16 tools
+agent.py                    entrypoint, STT/turn hooks, 12 tools
 clinic/clock.py             Eastern Time + simulated clock
 clinic/db.py                SQLite schema, seed, transactions, --show
 clinic/security.py          masking, keyed hash, audit log
@@ -726,6 +726,5 @@ transcripts/                call transcripts (created at run time, git-ignored)
 tests/                      offline tests (no network) + live-LLM tests, see PROGRESS.md for counts
 VOICE_TEST_CHECKLIST.md     manual voice test script
 PROGRESS.md                 development log, requirements audit and honest verified / not-verified labels
-Task_requirements.docx      the original assignment
 .env.example, requirements.txt, pytest.ini, .gitignore
 ```
