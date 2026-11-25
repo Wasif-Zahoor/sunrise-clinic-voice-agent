@@ -12,7 +12,7 @@ import pytest
 from clinic import callback_flow, gate, intent, tts_chain as tc
 from clinic.clock import HOURS_TEXT
 from clinic.tts_budget import CharBudget
-from clinic.tts_health import COOLDOWN_PERMANENT, COOLDOWN_TRANSIENT, ProviderHealth
+from clinic.tts_health import COOLDOWN_TRANSIENT, ProviderHealth
 from clinic.turn import assess_turn
 from conftest import CLOSED_EVENING, CLOSED_SATURDAY
 from test_call_flow_fixes import Call
@@ -145,10 +145,11 @@ def test_mark_ok_forgets_a_provider(health):
 @pytest.mark.asyncio
 async def test_the_next_call_does_not_wait_for_a_provider_the_last_one_gave_up_on(tmp_path, health, caplog):
     caplog.set_level(logging.INFO)
-    dg1, local1 = FakeTTS("deepgram", ["402"]), FakeTTS("local", ["ok"])
+    dg1, local1 = FakeTTS("deepgram", ["500"]), FakeTTS("local", ["ok"])           # slow failures: a timeout or error twice in a row
     first = chain_with(health, dg1, local1, tmp_path=tmp_path)
-    assert audible(await speak(first)) and "deepgram" in first.dead
-    assert health.cooling()["deepgram"]["minutes_left"] == COOLDOWN_PERMANENT // 60
+    await speak(first, "one")
+    assert audible(await speak(first, "two")) and "deepgram" in first.dead
+    assert health.cooling()["deepgram"]["minutes_left"] == COOLDOWN_TRANSIENT // 60
 
     caplog.clear()
     dg2, local2 = FakeTTS("deepgram", ["ok"]), FakeTTS("local", ["ok"])
@@ -187,7 +188,7 @@ def test_the_chain_is_never_left_without_a_provider(tmp_path, health):
 
 def test_a_provider_that_works_again_is_forgotten(tmp_path, health):
     chain = chain_with(health, FakeTTS("deepgram", ["ok"]), tmp_path=tmp_path)
-    chain._remember_down("deepgram", False, "x")
+    chain._remember_down("deepgram", "x")
     assert "deepgram" in health.cooling()
     chain._remember_ok("deepgram")
     assert health.cooling() == {}

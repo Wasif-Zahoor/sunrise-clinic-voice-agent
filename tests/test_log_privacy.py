@@ -70,14 +70,21 @@ async def test_llm_usage_and_failure_logs_have_no_conversation_text(caplog, stat
     assert "LLM unavailable on every provider" in caplog.text
 
 
+_SECRET_NAME = re.compile(r"key|secret|token|password|account_id", re.I)
+
+
+def _secret_values(min_len: int) -> dict[str, str]:
+    """The .env values that are credentials, judged by their NAME (key, secret, token, password, account id). Ordinary settings such
+    as TTS_PROVIDER_ORDER=cloudflare,local are not secrets and legitimately appear in the documentation."""
+    return {k: v for k, v in dotenv_values(ROOT / ".env").items() if v and len(v) >= min_len and _SECRET_NAME.search(k)}
+
+
 def test_env_is_ignored_and_the_example_has_placeholders_only():
     ignore = (ROOT / ".gitignore").read_text(encoding="utf8").splitlines()
     assert ".env" in ignore and ".env.*" in ignore and "!.env.example" in ignore
     example = (ROOT / ".env.example").read_text(encoding="utf8")
-    real_values = dotenv_values(ROOT / ".env")
-    for name, value in real_values.items():
-        if value and len(value) > 12:                            # a real key or secret
-            assert value not in example, f"a real value for {name} is in .env.example"
+    for name, value in _secret_values(13).items():               # a real key or secret
+        assert value not in example, f"a real value for {name} is in .env.example"
     for line in example.splitlines():
         if re.match(r"^[A-Z_]+=", line):                         # active (uncommented) settings must be placeholders
             _, _, v = line.partition("=")
@@ -86,7 +93,7 @@ def test_env_is_ignored_and_the_example_has_placeholders_only():
 
 def test_no_real_secret_value_appears_in_any_project_file():
     skip = {".venv", "__pycache__", ".pytest_cache", "data"}
-    secrets = {k: v for k, v in dotenv_values(ROOT / ".env").items() if v and len(v) >= 16 and k != "LIVEKIT_URL"}
+    secrets = _secret_values(16)
     for p in ROOT.rglob("*"):
         if p.is_file() and not set(p.parts) & skip and p.name != ".env" and p.suffix not in (".docx", ".db", ".pyc"):
             body = p.read_text(encoding="utf8", errors="ignore")

@@ -1,5 +1,30 @@
 # Progress
 
+## Round 13: a recorded call (2026-11-25, 19:49)
+
+During the recording (a CPU-heavy screen capture) the log showed: the chain `deepgram -> cloudflare -> local` (the recommended
+`TTS_PROVIDER_ORDER` had not been set), three Deepgram timeouts that each cost 4-5 s of dead air, Cloudflare answering **HTTP 401**, a
+first call that started 25 s after the session (5.7 s waiting for a worker: "no warmed process available"), `VAD inference is slower than
+realtime` and event-loop blocks of 100-340 ms (the machine was overloaded; one block was the hyphenation tables being built on first use).
+
+**Cloudflare 401, diagnosed:** the token (`cfat_...`, an account token) is valid and active, but Cloudflare answers "Cannot use the access
+token from location ...": the token has an **IP-address restriction** and the PC's address changed since it passed a test earlier the same
+day. Fix is in the Cloudflare dashboard (remove the IP restriction or add the current address); not a code problem.
+
+**Changed (offline-tested):**
+* `agent.prewarm` + `AgentServer(num_idle_processes=1)`: a spare worker exists before the first call; the hyphenation tables and lazy imports
+  (7.6 s cold) and the local voice load once at worker start. `tts_chain._VOICES` shares one loaded Piper model per process (a later call
+  renders in 0.5 s).
+* `tts_health`: a record is tied to a one-way fingerprint of the key / account / model, so a replaced token is not held back; refused keys
+  and used-up limits (401 / 402 / 403 / 429) fail in about 0.2 s and are **no longer remembered** (it would block a key whose restriction was
+  just fixed). The 60-minute rule of round 12 is gone; slow failures keep the 10-minute memory.
+* `.env`: `TTS_PROVIDER_ORDER=cloudflare,local` (Deepgram left out: timeouts from this PC).
+* `tests/test_log_privacy.py`: the secret scan now covers values whose NAME marks them as credentials (key, secret, token, password,
+  account id); it treated an ordinary setting such as `cloudflare,local` as a secret.
+
+**Results (actual).** Offline suite **722 passed**, 46 live deselected (was 706; +16 in `tests/test_round13.py`). Real worker start:
+spare worker initialised in 3.0 s before registration. **Not tested:** a live call with these changes.
+
 ## Round 12: fifth live call, after hours (2026-11-25, 15:11)
 
 An after-hours call (clock 20:30) saved a callback message correctly. Then "Can you tell me my last status?" (speech-to-text for "lab status")

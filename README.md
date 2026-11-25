@@ -5,7 +5,7 @@ lookups, lab status, billing and new / existing patient booking, takes messages 
 third-party requests and prompt injection. All patient data is **synthetic**. This is a prototype: it is **not certified HIPAA compliant**
 and no vendor BAA has been verified (see [HIPAA](#hipaa-measures-and-vendor-baas)).
 
-Voice call in a browser through LiveKit (no phone number). Twilio is not implemented. 706 offline tests pass; the developer's live voice
+Voice call in a browser through LiveKit (no phone number). Twilio is not implemented. 722 offline tests pass; the developer's live voice
 calls completed booking, balance, lab and after-hours flows. More detail: [docs/TECHNICAL_NOTES.md](docs/TECHNICAL_NOTES.md),
 [docs/PROGRESS.md](docs/PROGRESS.md) (development log and requirements audit), [docs/VOICE_TEST_CHECKLIST.md](docs/VOICE_TEST_CHECKLIST.md).
 

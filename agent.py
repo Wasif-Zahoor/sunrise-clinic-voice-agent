@@ -322,7 +322,26 @@ async def deliver_greeting(session: AgentSession, state: CallState, writer: tran
     return delivered
 
 
-server = AgentServer()
+def prewarm(proc) -> None:
+    """Runs once when the worker starts, before any call, so the FIRST call does not pay for these one-time costs (in a recorded call
+    the first greeting started 25 s after the session did: a cold worker, the hyphenation tables built on the event loop, and a cold
+    local voice that the greeting fell through to). Every step is optional: a failure only costs latency later."""
+    try:
+        from livekit.agents.tokenize import basic
+        basic.hyphenate_word("warmup")               # builds the hyphenation tables (about 300 ms, otherwise on the first reply)
+        import anyio.abc._eventloop, anyio.abc._sockets  # noqa: F401,E401  (lazy imports that blocked the loop for ~280 ms)
+    except Exception:                                # noqa: BLE001
+        pass
+    try:
+        from clinic.tts_chain import warm_local_voice
+        warm_local_voice()                           # load the offline voice once; every call then shares it
+    except Exception:                                # noqa: BLE001
+        pass
+
+
+# In dev mode LiveKit starts with NO spare worker, so the first call waited for one to be created (5.7 s in a recorded call).
+server = AgentServer(num_idle_processes=1)
+server.setup_fnc = prewarm
 
 
 @server.rtc_session()

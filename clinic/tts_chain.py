@@ -19,6 +19,7 @@ Nothing here logs spoken text: only provider names, error types and character co
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -37,7 +38,7 @@ from livekit.agents import (DEFAULT_API_CONNECT_OPTIONS, APIConnectionError, API
 from . import config, voice_diag
 from .llm_router import _env_key
 from .tts_budget import CharBudget
-from .tts_health import COOLDOWN_PERMANENT, COOLDOWN_TRANSIENT, ProviderHealth
+from .tts_health import COOLDOWN_TRANSIENT, ProviderHealth
 from .tts_health import enabled as health_enabled
 
 logger = logging.getLogger("clinic.tts")
@@ -61,6 +62,26 @@ MAX_STRIKES = 2                                        # consecutive transient f
 
 
 # ---- local provider: Piper ------------------------------------------------------------------------------------------------
+_VOICES: dict[str, Any] = {}                               # loaded Piper models, shared by every call in this process
+_VOICE_LOCK = threading.Lock()
+
+
+def warm_local_voice(env: dict[str, str] | None = None) -> bool:
+    """Load the local voice and speak one word, once, when the worker starts, so the first call (whose first voice may fail fast and
+    fall through to this one) does not wait for a cold model (about 4 s). Returns whether it was done."""
+    env = dict(os.environ if env is None else env)
+    path = Path(env.get("PIPER_MODEL") or DEFAULT_PIPER_MODEL)
+    path = path if path.is_absolute() else config.PROJECT_ROOT / path
+    if not path.exists() or not Path(str(path) + ".json").exists():
+        return False
+    try:
+        PiperTTS(path).render("Hello.")
+        return True
+    except Exception as e:                                 # noqa: BLE001  (a warm-up failure only costs latency later)
+        logger.warning("local TTS warm-up failed (%s)", type(e).__name__)
+        return False
+
+
 class PiperTTS(tts.TTS):
     """Piper neural TTS on the CPU. Not streaming: the chain feeds it one grouped chunk at a time."""
 
@@ -86,8 +107,12 @@ class PiperTTS(tts.TTS):
     def _load(self) -> Any:
         with self._lock:                                   # a warm-up thread and a first request may race
             if self._voice is None:
-                from piper import PiperVoice
-                self._voice = PiperVoice.load(str(self._path))
+                with _VOICE_LOCK:                          # one loaded model per file for the whole process, shared by every call
+                    key = str(self._path.resolve())
+                    if key not in _VOICES:
+                        from piper import PiperVoice
+                        _VOICES[key] = PiperVoice.load(str(self._path))
+                    self._voice = _VOICES[key]
             return self._voice
 
     def sentences(self, text: str):
@@ -189,6 +214,7 @@ class Provider:
     name: str
     tts: tts.TTS
     hold: bool = False         # network providers: keep each clip until complete (see _speak_with); the local voice streams
+    fingerprint: str = ""      # one-way hash of the key / account / model in use: a changed key is not held back by an old failure
 
 
 def _describe(e: BaseException) -> str:
@@ -223,7 +249,7 @@ class TtsChain(tts.TTS):
         never left without a provider: if every one is cooling down, all of them are tried."""
         if self.health is None:
             return
-        cooling = self.health.cooling()
+        cooling = self.health.cooling({p.name: p.fingerprint for p in self.providers})
         skipped = [p.name for p in self.providers if p.name in cooling]
         if not skipped or len(skipped) == len(self.providers):
             return
@@ -232,9 +258,10 @@ class TtsChain(tts.TTS):
             logger.warning("TTS provider %s skipped for this call: it failed shortly before (%s); it is tried again in about %d min",
                            name, cooling[name]["why"], cooling[name]["minutes_left"])
 
-    def _remember_down(self, name: str, permanent: bool, why: str) -> None:
+    def _remember_down(self, name: str, why: str) -> None:
         if self.health is not None:
-            self.health.mark_down(name, COOLDOWN_PERMANENT if permanent else COOLDOWN_TRANSIENT, why)
+            fp = next((p.fingerprint for p in self.providers if p.name == name), "")
+            self.health.mark_down(name, COOLDOWN_TRANSIENT, why, fp)
             self._marked_down.add(name)
 
     def _remember_ok(self, name: str) -> None:
@@ -370,7 +397,11 @@ class _ChainStream(tts.ChunkedStream):
             permanent = getattr(e, "status_code", None) in PERMANENT_STATUS or chain.strikes[p.name] >= MAX_STRIKES
             if permanent:
                 chain.dead.add(p.name)
-                chain._remember_down(p.name, getattr(e, "status_code", None) in PERMANENT_STATUS, _describe(e))
+                # Only a SLOW failure is remembered for later calls (two timeouts / errors in a row: each call would wait out the
+                # deadline again). A refused key or an used-up limit (HTTP 401 / 402 / 403 / 429) fails at once, so there is nothing
+                # to save, and remembering it would only block a key that has just been fixed.
+                if getattr(e, "status_code", None) not in PERMANENT_STATUS:
+                    chain._remember_down(p.name, _describe(e))
             at = chain.providers.index(p)
             next_now = next((q.name for q in chain.providers[at + 1:] if q.name not in chain.dead), None)   # speaks THIS chunk
             remaining = [q.name for q in chain.providers if q.name not in chain.dead]                       # speaks LATER chunks
@@ -404,6 +435,7 @@ def build_providers(settings: config.Settings, env: dict[str, str] | None = None
     env = dict(os.environ if env is None else env)
     out: list[Provider] = []
     for name in provider_order(env):
+        fp = ""
         try:
             if name == "deepgram":
                 key = _env_key(env, "DEEPGRAM_API_KEY")
@@ -413,6 +445,7 @@ def build_providers(settings: config.Settings, env: dict[str, str] | None = None
                 from livekit.plugins import deepgram
                 inst = deepgram.TTS(model=env.get("DEEPGRAM_TTS_MODEL") or DEFAULT_DEEPGRAM_MODEL, api_key=key,
                                     encoding="linear16", sample_rate=CHAIN_SAMPLE_RATE, mip_opt_out=True)
+                fp = _fingerprint(key, env.get("DEEPGRAM_TTS_MODEL") or DEFAULT_DEEPGRAM_MODEL)
             elif name == "local":
                 path = Path(env.get("PIPER_MODEL") or DEFAULT_PIPER_MODEL)
                 path = path if path.is_absolute() else config.PROJECT_ROOT / path
@@ -429,12 +462,14 @@ def build_providers(settings: config.Settings, env: dict[str, str] | None = None
                     continue
                 inst = CloudflareTTS(account_id=account, token=key, model=env.get("CLOUDFLARE_TTS_MODEL") or DEFAULT_CLOUDFLARE_MODEL,
                                      speaker=cloudflare_speaker(env))
+                fp = _fingerprint(key, account, env.get("CLOUDFLARE_TTS_MODEL") or DEFAULT_CLOUDFLARE_MODEL)
             elif name == "groq":
                 if not _env_key(env, "GROQ_API_KEY"):
                     logger.info("TTS provider groq skipped: GROQ_API_KEY is not set")
                     continue
                 from .tts_safety import SafeGroqTTS, get_limiter
                 inst = SafeGroqTTS(model=settings.tts_model, voice=settings.tts_voice, limiter=get_limiter(settings.tts_max_rpm))
+                fp = _fingerprint(_env_key(env, "GROQ_API_KEY"), settings.tts_model)
             else:
                 logger.warning("TTS_PROVIDER_ORDER names an unknown provider %r (known: deepgram, local, cloudflare, groq); "
                                "skipped", name)
@@ -442,8 +477,13 @@ def build_providers(settings: config.Settings, env: dict[str, str] | None = None
         except Exception as e:                                                # noqa: BLE001  (one broken provider must not stop the rest)
             logger.warning("TTS provider %s could not be created (%s); skipped", name, type(e).__name__)
             continue
-        out.append(Provider(name, inst, hold=name != "local"))
+        out.append(Provider(name, inst, hold=name != "local", fingerprint=fp))
     return out
+
+
+def _fingerprint(*parts: str) -> str:
+    """A short one-way hash of the credentials in use (the key cannot be recovered from it)."""
+    return hashlib.sha256("\x1f".join(p or "" for p in parts).encode("utf-8")).hexdigest()[:12]
 
 
 def cloudflare_speaker(env: dict[str, str]) -> str:

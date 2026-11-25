@@ -503,12 +503,17 @@ Deepgram with its model-improvement data opt-out (`mip_opt_out=true`) switched o
   whole first chunk is ready (about 1.5-3 s for a short reply instead of 0.4-1 s), which is why the **first chunk of a reply is capped at
   90 characters** (the greeting is two requests, the first being the opening sentence). `TTS_HOLD=0` turns the hold off.
 * **Provider memory between calls** (`clinic/tts_health.py`, `data/tts_health.json`, git-ignored). A provider the chain gave up on is
-  remembered for 10 minutes (two timeouts or errors in a row) or 60 minutes (bad key, no credit or an exhausted daily limit: HTTP
-  401 / 402 / 403 / 429), and later calls skip it ("TTS provider deepgram skipped for this call: it failed shortly before"), then try it
-  again. Without this every call found out again by waiting for a deadline: in a real after-hours call Deepgram timed out and Cloudflare's
-  free daily limit was used up (HTTP 429), and the greeting had 5 s and then 9 s of silence before the local voice spoke. The chain is never
-  left without a provider (if all are cooling down, all are tried). Only provider names, a reason such as `APITimeoutError` and a time
-  are stored. `TTS_HEALTH=off` switches it off.
+  remembered for 10 minutes after two timeouts or errors in a row, and later calls skip it ("TTS provider deepgram skipped for this call:
+  it failed shortly before"), then try it again. Without this every call found out again by waiting for a deadline: in a real call
+  Deepgram timed out and the greeting had 5 s and then 9 s of silence before the local voice spoke. A refused key or used-up limit (HTTP
+  401 / 402 / 403 / 429) is **not** remembered: it fails in about 0.2 s, so there is nothing to save, and it would only block a key that
+  was just fixed. A record is also ignored when the key, account or model has changed since (a one-way fingerprint is stored). The chain is
+  never left without a provider (if all are cooling down, all are tried). Only provider names, a reason such as `APITimeoutError`, a time
+  and that fingerprint are stored. `TTS_HEALTH=off` switches it off.
+* **Worker warm-up** (`agent.prewarm`, `AgentServer(num_idle_processes=1)`). In dev mode LiveKit starts with no spare worker, so the first
+  call waited for one to be created (5.7 s in a recorded call), and one-time set-up (hyphenation tables, lazy imports: 7.6 s cold) and a
+  cold local voice landed on the first greeting. They now run when the worker starts, and the local voice is loaded once per process and
+  shared by every call.
 * **Same voice on Cloudflare.** The Cloudflare request names `speaker` = the speaker in `DEEPGRAM_TTS_MODEL` (`aura-2-thalia-en` ->
   `thalia`; override with `CLOUDFLARE_TTS_SPEAKER`), so a switch from Deepgram to Cloudflare is not heard. Default order is now
   `deepgram,cloudflare,local`; a provider without keys is skipped. Cloudflare's free allowance for this model is **about 3,600 characters
